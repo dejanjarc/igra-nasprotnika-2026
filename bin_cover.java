@@ -161,11 +161,17 @@ class BinCoveringSolver {
     }
 
     private Integer chooseBin(int itemIndex, BigDecimal itemSize) {
-        Integer bestCoverBin = null;
-        BigDecimal bestCoverLoad = null;
+        Integer bestAcceptedCoverBin = null;
+        BigDecimal bestAcceptedOvershoot = null;
+
+        Integer bestForcedCoverBin = null;
+        BigDecimal bestForcedOvershoot = null;
 
         Integer bestFillBin = null;
-        BigDecimal bestFillLoad = null;
+        BigDecimal bestFillScore = null;
+
+        BigDecimal coverLimit = coverOvershootLimit(itemSize);
+        BigDecimal targetLoad = targetLoadAfterPlacement(itemSize);
 
         for (int binId : openBins) {
             Bin bin = bins.get(binId);
@@ -177,40 +183,122 @@ class BinCoveringSolver {
             BigDecimal newTotal = bin.total.add(itemSize);
 
             if (newTotal.compareTo(ONE) >= 0) {
-                // Best cover: choose the fullest bin that becomes covered
-                if (bestCoverBin == null || bin.total.compareTo(bestCoverLoad) > 0) {
-                    bestCoverBin = binId;
-                    bestCoverLoad = bin.total;
+                BigDecimal overshoot = newTotal.subtract(ONE);
+
+                // Keep track of the minimum-overshoot cover no matter what
+                if (bestForcedCoverBin == null || overshoot.compareTo(bestForcedOvershoot) < 0) {
+                    bestForcedCoverBin = binId;
+                    bestForcedOvershoot = overshoot;
+                }
+
+                // Accept cover only if overshoot is small enough
+                if (overshoot.compareTo(coverLimit) <= 0) {
+                    if (bestAcceptedCoverBin == null || overshoot.compareTo(bestAcceptedOvershoot) < 0) {
+                        bestAcceptedCoverBin = binId;
+                        bestAcceptedOvershoot = overshoot;
+                    }
                 }
             } else {
-                // Best unfinished fill: choose the fullest unfinished bin
-                if (bestFillBin == null || bin.total.compareTo(bestFillLoad) > 0) {
+                // Non-cover placement: prefer bins whose new load is close to a target
+                BigDecimal score = fillScore(bin.total, itemSize, newTotal, targetLoad);
+
+                if (bestFillBin == null || score.compareTo(bestFillScore) > 0) {
                     bestFillBin = binId;
-                    bestFillLoad = bin.total;
+                    bestFillScore = score;
                 }
             }
         }
 
-        if (bestCoverBin != null) {
-            return bestCoverBin;
+        // First priority: good cover with limited overshoot
+        if (bestAcceptedCoverBin != null) {
+            return bestAcceptedCoverBin;
         }
 
-        // Large item protection:
-        // use a large item to strengthen an existing bin only if that bin already looks promising
-        if (itemSize.compareTo(largeItemThreshold) >= 0) {
-            if (bestFillBin != null && bestFillLoad.compareTo(largeReuseMinLoad) >= 0) {
-                return bestFillBin;
+        // If too many bins are open, force the least-wasteful cover
+        if (openBins.size() >= 12 && bestForcedCoverBin != null) {
+            return bestForcedCoverBin;
+        }
+
+        // Large items are often better as anchors for new bins
+        if (itemSize.compareTo(new BigDecimal("0.75")) >= 0) {
+            if (bestFillBin != null) {
+                Bin fillBin = bins.get(bestFillBin);
+                BigDecimal newTotal = fillBin.total.add(itemSize);
+
+                // Only reuse an existing bin if it creates a promising partial bin
+                if (newTotal.compareTo(new BigDecimal("0.80")) >= 0
+                        && newTotal.compareTo(new BigDecimal("0.98")) <= 0) {
+                    return bestFillBin;
+                }
             }
-            return null;
+            return null; // open new bin
         }
 
-        if (bestFillBin != null) {
+        // For smaller items, use the best non-cover fit if it looks reasonable
+        if (bestFillBin != null && bestFillScore.compareTo(new BigDecimal("-0.30")) > 0) {
             return bestFillBin;
+        }
+
+        // Otherwise, if a cover exists at all, use the least wasteful one
+        if (bestForcedCoverBin != null) {
+            return bestForcedCoverBin;
         }
 
         return null;
     }
 
+    private BigDecimal coverOvershootLimit(BigDecimal itemSize) {
+        if (itemSize.compareTo(new BigDecimal("0.10")) <= 0) {
+            return new BigDecimal("0.20");
+        }
+        if (itemSize.compareTo(new BigDecimal("0.30")) <= 0) {
+            return new BigDecimal("0.12");
+        }
+        if (itemSize.compareTo(new BigDecimal("0.60")) <= 0) {
+            return new BigDecimal("0.08");
+        }
+        if (itemSize.compareTo(new BigDecimal("0.75")) <= 0) {
+            return new BigDecimal("0.05");
+        }
+        return new BigDecimal("0.03");
+    }
+
+    private BigDecimal targetLoadAfterPlacement(BigDecimal itemSize) {
+        if (itemSize.compareTo(new BigDecimal("0.75")) >= 0) {
+            return new BigDecimal("0.85");
+        }
+        if (itemSize.compareTo(new BigDecimal("0.50")) >= 0) {
+            return new BigDecimal("0.90");
+        }
+        if (itemSize.compareTo(new BigDecimal("0.20")) >= 0) {
+            return new BigDecimal("0.96");
+        }
+        return new BigDecimal("0.995");
+    }
+
+    private BigDecimal fillScore(BigDecimal currentLoad,
+                                BigDecimal itemSize,
+                                BigDecimal newTotal,
+                                BigDecimal targetLoad) {
+        // Higher is better
+
+        // Prefer getting close to the target load
+        BigDecimal distance = newTotal.subtract(targetLoad).abs();
+        BigDecimal score = distance.negate();
+
+        // Small bonus for strengthening an existing bin instead of making many weak bins
+        if (currentLoad.compareTo(BigDecimal.ZERO) > 0) {
+            score = score.add(new BigDecimal("0.05"));
+        }
+
+        // Penalize leaving bins in an awkward middle state
+        if (newTotal.compareTo(new BigDecimal("0.45")) >= 0 &&
+            newTotal.compareTo(new BigDecimal("0.70")) <= 0) {
+            score = score.subtract(new BigDecimal("0.08"));
+        }
+
+        return score;
+    }
     /**
      * Hook for extra rules.
      * Override this logic if your bins have additional constraints.
