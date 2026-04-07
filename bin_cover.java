@@ -16,7 +16,7 @@ import java.util.*;
     - largeItemThreshold: velikost, nad katero se šteje, da je predmet velik (npr. 0.5)
     - largeReuseMinLoad: minimalna napolnjenost, pri kateri se lahko velik predmet uporabi za izboljšanje obstoječega kosa (npr. 0.20)
     - largeItemMaxOvershoot: največje dovoljeno preseganje polnosti koša pri dodajanju velikega predmeta (npr. 0.10)
-    - weakBinLoadThreshold: prag, pod katerim se koš šteje za šibek, da bi vanj dodali velik predmet (npr. 0.20)
+    - largeItemMinBinLoad: prag, pod katerim se koš šteje za šibek, da bi vanj dodali velik predmet (npr. 0.20)
  */
 
 public class bin_cover {
@@ -43,10 +43,10 @@ public class bin_cover {
         }
 
         File[] files = inputDir.listFiles();
-        Arrays.sort(files, Comparator.comparing(File::getName)); // sort input files by name for consistency
         if (files == null) {
             throw new IOException("Could not read input folder.");
         }
+        Arrays.sort(files, Comparator.comparing(File::getName)); // sort input files by name for consistency
 
         // Process each input file
         for (File inputFile : files) {
@@ -55,11 +55,12 @@ public class bin_cover {
             }
             // create new solver instance for each input file
             // adjust parameters here if needed
+            // initial values set based on testing and benchmarking
             BinCoveringSolver solver = new BinCoveringSolver(
-                    new BigDecimal("0.7"),  // large item threshold
-                    new BigDecimal("0.20"), // reuse minimal load
-                    new BigDecimal("0.10"), // large item max overshoot
-                    new BigDecimal("0.10")  // weak bin load threshold
+                    new BigDecimal("0.71"),     // large item threshold
+                    new BigDecimal("0.20"),     // reuse minimal load
+                    new BigDecimal("0.14"),     // large item max overshoot
+                    new BigDecimal("0.15")      // large item min bin load
             );
 
             List<BigDecimal> items = readFile(inputFile.getAbsolutePath()); // read items from input file
@@ -127,18 +128,18 @@ class BinCoveringSolver {
     private final BigDecimal largeItemThreshold;    // threshold for large items (example: 0.5)
     private final BigDecimal largeReuseMinLoad;     // minimum load for reusing a bin with a large item (example: 0.20)
     private final BigDecimal largeItemMaxOvershoot; // maximum overshoot allowed for large items (example: 0.10)
-    private final BigDecimal weakBinLoadThreshold;  // threshold for weak bins (example: 0.20)
+    private final BigDecimal largeItemMinBinLoad;   // threshold for bins with large items (example: 0.20)
 
     private final List<Bin> bins = new ArrayList<>();
     private final List<Integer> openBins = new ArrayList<>();
     private final List<Integer> coveredBins = new ArrayList<>();
 
     // constructor for BinCoveringSolver
-    public BinCoveringSolver(BigDecimal largeItemThreshold, BigDecimal largeReuseMinLoad, BigDecimal largeItemMaxOvershoot, BigDecimal weakBinLoadThreshold) {
+    public BinCoveringSolver(BigDecimal largeItemThreshold, BigDecimal largeReuseMinLoad, BigDecimal largeItemMaxOvershoot, BigDecimal largeItemMinBinLoad) {
         this.largeItemThreshold = largeItemThreshold;
         this.largeReuseMinLoad = largeReuseMinLoad;
         this.largeItemMaxOvershoot = largeItemMaxOvershoot;
-        this.weakBinLoadThreshold = weakBinLoadThreshold;
+        this.largeItemMinBinLoad = largeItemMinBinLoad;
     }
 
     // solve: method for covering bins with the given items
@@ -250,7 +251,7 @@ class BinCoveringSolver {
         // Large item protection
         // reject placement of a large item into a weakly covered bin
         if (itemSize.compareTo(largeItemThreshold) >= 0 &&
-            bin.total.compareTo(weakBinLoadThreshold) < 0) {
+            bin.total.compareTo(largeItemMinBinLoad) < 0) {
             return false;
         }
 
